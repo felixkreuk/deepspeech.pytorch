@@ -23,15 +23,8 @@ cd pytorch_binding
 python setup.py install
 ```
 
-Install pytorch audio:
-```
-sudo apt-get install sox libsox-dev libsox-fmt-all
-git clone https://github.com/pytorch/audio.git
-cd audio
-python setup.py install
-```
-
 Finally:
+
 ```
 pip install -r requirements.txt
 ```
@@ -137,22 +130,6 @@ There is also [Visdom](https://github.com/facebookresearch/visdom) support to vi
 python train.py --visdom
 ```
 
-### Noise Augmentation/Injection
-
-There is support for two different types of noise; noise augmentation and noise injection.
-
-#### Noise Augmentation
-
-Applies small changes to the tempo and gain when loading audio to increase robustness. To use, use the `--augment` flag when training.
-
-#### Noise Injection
-
-Dynamically adds noise into the training data to increase robustness. To use, first fill a directory up with all the noise files you want to sample from.
-The dataloader will randomly pick samples from this directory.
-
-To enable noise injection, use the `--noise_dir /path/to/noise/dir/` to specify where your noise files are. There are a few noise parameters to tweak, such as
-`--noise_prob` to determine the probability that noise is added, and the `--noise_min`, `--noise_max` parameters to determine the minimum and maximum noise to add in training.
-
 ### Checkpoints
 
 Training supports saving checkpoints of the model to continue training from should an error occur or early termination. To enable epoch
@@ -190,14 +167,6 @@ python benchmark.py --batch_size 32
 
 Use the flag `--help` to see other parameters that can be used with the script.
 
-### Model details
-
-Saved models contain the metadata of their training process. To see the metadata run the below command:
-
-```
-python model.py --model_path models/deepspeech.pth.tar
-```
-
 ## Acknowledgements
 
-Thanks to [Egor](https://github.com/EgorLakomkin) and [Ryan](https://github.com/ryanleary) for their contributions!
+Thanks to [Egor](https://github.com/EgorLakomkin) for his awesome contributions in data processing and general feedback!
