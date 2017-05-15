@@ -35,6 +35,7 @@ class Decoder(object):
         # e.g. labels = "_'ABCDEFGHIJKLMNOPQRSTUVWXYZ#"
         self.labels = labels
         self.int_to_char = dict([(i, c) for (i, c) in enumerate(labels)])
+        self.char_to_int = dict([(c, i) for i, c in self.int_to_char.iteritems()])
         self.blank_index = blank_index
         self.space_index = space_index
 
@@ -125,6 +126,25 @@ class Decoder(object):
         """
         raise NotImplementedError
 
+    def strings_to_labels(self, str_list):
+        str_list_len = len(str_list)
+        str_list_len_sum = sum([len(str) for str in str_list])
+        label_lens = torch.IntTensor(str_list_len)
+        labels = None
+
+        for i, str in enumerate(str_list):
+            cur_str = torch.IntTensor(len(str))  # create a tensor to represent labels of string
+            for j, c in enumerate(str):
+                cur_str[j] = self.char_to_int[c]  # insert indexes of chars into tensor
+            # concat the current string tensor with the overall labels
+            if labels is None:
+                labels = cur_str
+            else:
+                labels = torch.cat((labels, cur_str), 0)
+            label_lens[i] = len(str)
+
+        return labels, label_lens
+
 
 class ArgMaxDecoder(Decoder):
     def decode(self, probs, sizes=None):
@@ -144,25 +164,18 @@ class ArgMaxDecoder(Decoder):
 
 
 class BeamSearchDecoder(Decoder):
+    def __init__(self, labels, beam_size=12):
+        super(BeamSearchDecoder, self).__init__(labels=labels)
+        self.beam_size = beam_size
+
     def decode(self, probs, sizes=None):
         from ctc_beamsearch import ctc_beamsearch
         strings = []
-        probs_transpose = probs.transpose(0, 1)
+        probs_transpose = probs.transpose(0, 1).cpu()
 
         # iterate over probability distribution in each batch [due to API of ctc_beamsearch]
         for batch_idx in xrange(probs.size(1)):
             b_probs = probs_transpose[batch_idx].numpy()
-            decoded = ctc_beamsearch(b_probs, alphabet=self.labels, k=10)
+            decoded = ctc_beamsearch(b_probs, alphabet=self.labels, blank_symbol='_', k=self.beam_size)
             strings.append(decoded)
         return self.process_strings(strings, remove_repetitions=True)
-
-    def string_to_activations(self, strings):
-        batch_size = len(strings)
-        strings = [string.upper() for string in strings]
-        n_labels = len(self.labels)
-        string_len = max([len(string) for string in strings])
-        acts = torch.LongTensor(string_len, batch_size, n_labels).zero_()
-
-        # TODO ???
-
-        return acts

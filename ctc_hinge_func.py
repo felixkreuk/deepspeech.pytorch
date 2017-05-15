@@ -12,23 +12,29 @@ class _ctc_hinge_loss(Function):
         self.grads = None
 
     def forward(self, acts, labels, act_lens, label_lens):
-        grads = torch.zeros(acts.size()).type_as(acts)
+        """
+        MUST get Tensors and return a Tensor.
+        """
+        self.grads = torch.zeros(acts.size()).type_as(acts)
         acts, labels, act_lens, label_lens = Variable(acts), \
                                              Variable(labels), \
                                              Variable(act_lens), \
                                              Variable(label_lens)
-        ctc = CTCLoss()
+        ctc = _CTC()
 
-        y_hat = self.decoder.decode(acts.data, acts.size(0))
+        # predict y_hat [as in argmax y_hat = phi(x,y) + L]
+        y_hat = self.decoder.decode(acts.data, act_lens)
+        # translate string prediction to tensors of labels
+        y_hat_labels, y_hat_label_lens = self.decoder.strings_to_labels(y_hat)
+        y_hat_labels, y_hat_label_lens = Variable(y_hat_labels), Variable(y_hat_label_lens)
 
-        costs = self.aug_loss
-        costs -= ctc(acts, labels, act_lens, label_lens)
-        grads += ctc.grads
-        costs += ctc(acts, labels, act_lens, label_lens)
-        grads += ctc.grads
-        self.grads = grads
+        costs = -ctc(acts, labels, act_lens, label_lens)
+        self.grads += ctc.grads
+        costs += ctc(acts, y_hat_labels, act_lens, y_hat_label_lens)
+        self.grads += ctc.grads
+        costs += self.aug_loss
 
-        return costs
+        return costs.data
 
     def backward(self, grad_output):
         return self.grads, None, None, None
@@ -41,5 +47,4 @@ class ctc_hinge_loss(Module):
         self.aug_loss = aug_loss
 
     def forward(self, acts, labels, act_lens, label_lens):
-        return _ctc_hinge_loss(self.decoder, self.aug_loss)\
-            (acts, labels, act_lens, label_lens)
+        return _ctc_hinge_loss(self.decoder, self.aug_loss)(acts, labels, act_lens, label_lens)

@@ -119,7 +119,7 @@ def main():
         labels = str(''.join(json.load(label_file)))
 
     # decoder = ArgMaxDecoder(labels)
-    decoder = BeamSearchDecoder(labels)
+    decoder = BeamSearchDecoder(labels, beam_size=12)
     # criterion = CTCLoss()
     criterion = ctc_hinge_loss(decoder, aug_loss=1)
 

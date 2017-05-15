@@ -9,7 +9,7 @@ def joint(char, y, input_dist, alphabet, B, Pr, pb_):
     return out
 
 
-def ctc_beamsearch(input_dist, alphabet="_ABCDEFGHIJKLMNOPQRSTUVWXYZ#", blank_symbol='_', k=10):
+def ctc_beamsearch(input_dist, alphabet, blank_symbol, k=10):
     # input_dist should be numpy matrix
     # beamsize is k
     T = input_dist.shape[0]
