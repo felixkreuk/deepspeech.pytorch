@@ -43,7 +43,10 @@ parser.add_argument('--final_model_path', default='models/deepspeech_final.pth.t
 parser.add_argument('--continue_from', default='', help='Continue from checkpoint model')
 parser.add_argument('--rnn_type', default='lstm', help='Type of the RNN. rnn|gru|lstm are supported')
 parser.add_argument('--augment', dest='augment', action='store_true', help='Use random tempo and gain perturbations.')
-parser.set_defaults(cuda=False, silent=False, checkpoint=False, visdom=False, augment=False)
+parser.add_argument('--beam_size', dest='beam_size', type=int, help='Size of beam in decoder beam search.')
+parser.add_argument('--decoder', default='argmax', help='Type of the decoder used for inference.')
+parser.add_argument('--loss', default='CTC', help='Type of loss.')
+parser.set_defaults(cuda=False, silent=False, checkpoint=False, visdom=False, augment=False, beam_size=12)
 
 
 class AverageMeter(object):
@@ -95,6 +98,7 @@ def main():
 
     loss_results, cer_results, wer_results = None, None, None
     if args.visdom:
+        print("Using visdom.")
         from visdom import Visdom
         viz = Visdom()
 
@@ -118,10 +122,14 @@ def main():
     with open(args.labels_path) as label_file:
         labels = str(''.join(json.load(label_file)))
 
-    # decoder = ArgMaxDecoder(labels)
-    decoder = BeamSearchDecoder(labels, beam_size=12)
-    # criterion = CTCLoss()
-    criterion = ctc_hinge_loss(decoder, aug_loss=1)
+    if args.decoder == 'beamsearch':
+        decoder = BeamSearchDecoder(labels, beam_size=args.beam_size)
+    else:
+        decoder = ArgMaxDecoder(labels)
+    if args.loss == 'ctc_hinge':
+        criterion = ctc_hinge_loss(decoder, aug_loss=1)
+    else:
+        criterion = CTCLoss()
 
     audio_conf = dict(sample_rate=args.sample_rate,
                       window_size=args.window_size,
@@ -154,7 +162,7 @@ def main():
         print("Loading checkpoint model %s" % args.continue_from)
         package = torch.load(args.continue_from)
         model.load_state_dict(package['state_dict'])
-        optimizer.load_state_dict(package['optim_dict'])
+        # optimizer.load_state_dict(package['optim_dict'])
         start_epoch = int(package.get('epoch', None) or 1) - 1  # Python index start at 0 for training
         start_iter = package.get('iteration', None)
         if start_iter is None:
@@ -163,19 +171,19 @@ def main():
         else:
             start_iter += 1
         avg_loss = int(package.get('avg_loss', 0))
-        if args.visdom and \
-                        package['loss_results'] is not None and start_epoch > 0:  # Add previous scores to visdom graph
-            epoch = start_epoch
-            loss_results, cer_results, wer_results = package['loss_results'], package['cer_results'], package[
-                'wer_results']
-            x_axis = epochs[0:epoch]
-            y_axis = [loss_results[0:epoch], wer_results[0:epoch], cer_results[0:epoch]]
-            for x in range(len(viz_windows)):
-                viz_windows[x] = viz.line(
-                    X=x_axis,
-                    Y=y_axis[x],
-                    opts=opts[x],
-                )
+        # if args.visdom and \
+        #                 package['loss_results'] is not None and start_epoch > 0:  # Add previous scores to visdom graph
+        #     epoch = start_epoch
+        #     loss_results, cer_results, wer_results = package['loss_results'], package['cer_results'], package[
+        #         'wer_results']
+        #     x_axis = epochs[0:epoch]
+        #     y_axis = [loss_results[0:epoch], wer_results[0:epoch], cer_results[0:epoch]]
+        #     for x in range(len(viz_windows)):
+        #         viz_windows[x] = viz.line(
+        #             X=x_axis,
+        #             Y=y_axis[x],
+        #             opts=opts[x],
+        #         )
     else:
         avg_loss = 0
         start_epoch = 0
@@ -210,6 +218,12 @@ def main():
 
             loss = criterion(out, targets, sizes, target_sizes)
             loss = loss / inputs.size(0)  # average the loss by minibatch
+
+            # TODO START OF TEST SECTION
+            if loss.data.sum() < 0:
+                print "Loss < 0, skipping."
+                continue
+            # TODO END OF TEST SECTION
 
             loss_sum = loss.data.sum()
             inf = float("inf")

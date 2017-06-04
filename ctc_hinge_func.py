@@ -28,10 +28,11 @@ class _ctc_hinge_loss(Function):
         y_hat_labels, y_hat_label_lens = self.decoder.strings_to_labels(y_hat)
         y_hat_labels, y_hat_label_lens = Variable(y_hat_labels), Variable(y_hat_label_lens)
 
-        costs = -ctc(acts, labels, act_lens, label_lens)
+        # hinge-loss calculation
+        costs = ctc(acts, labels, act_lens, label_lens)
         self.grads += ctc.grads
-        costs += ctc(acts, y_hat_labels, act_lens, y_hat_label_lens)
-        self.grads += ctc.grads
+        costs -= ctc(acts, y_hat_labels, act_lens, y_hat_label_lens)
+        self.grads -= ctc.grads
         costs += self.aug_loss
 
         return costs.data
