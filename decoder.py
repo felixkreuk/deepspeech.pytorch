@@ -128,12 +128,13 @@ class Decoder(object):
 
     def strings_to_labels(self, str_list):
         str_list_len = len(str_list)
-        str_list_len_sum = sum([len(str) for str in str_list])
+        # str_list_len_sum = sum([len(str) for str in str_list])
         label_lens = torch.IntTensor(str_list_len)
         labels = None
 
         for i, str in enumerate(str_list):
-            cur_str = torch.IntTensor(len(str))  # create a tensor to represent labels of string
+            cur_str_len = len(str)
+            cur_str = torch.IntTensor(cur_str_len)  # create a tensor to represent labels of string
             for j, c in enumerate(str):
                 cur_str[j] = self.char_to_int[c]  # insert indexes of chars into tensor
             # concat the current string tensor with the overall labels
@@ -141,7 +142,7 @@ class Decoder(object):
                 labels = cur_str
             else:
                 labels = torch.cat((labels, cur_str), 0)
-            label_lens[i] = len(str)
+            label_lens[i] = cur_str_len
 
         return labels, label_lens
 

@@ -157,7 +157,7 @@ def main():
                                 momentum=args.momentum, nesterov=True)
 
     if args.cuda:
-        model = torch.nn.DataParallel(model).cuda()
+        model = model.cuda()
     if args.continue_from:
         print("Loading checkpoint model %s" % args.continue_from)
         package = torch.load(args.continue_from)

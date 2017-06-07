@@ -3,6 +3,7 @@ import torch.nn as nn
 from torch.autograd import Function, Variable
 from torch.nn import Module
 from warpctc_pytorch import CTCLoss, _CTC
+import torch.nn.functional as F
 
 
 class _ctc_hinge_loss(Function):
@@ -23,7 +24,8 @@ class _ctc_hinge_loss(Function):
         ctc = _CTC()
 
         # predict y_hat [as in argmax y_hat = phi(x,y) + L]
-        y_hat = self.decoder.decode(acts.data, act_lens)
+        # y_hat = self.decoder.decode(acts.data, act_lens)
+        y_hat = self.decoder.decode(F.log_softmax(acts).data, act_lens)
         # translate string prediction to tensors of labels
         y_hat_labels, y_hat_label_lens = self.decoder.strings_to_labels(y_hat)
         y_hat_labels, y_hat_label_lens = Variable(y_hat_labels), Variable(y_hat_label_lens)
