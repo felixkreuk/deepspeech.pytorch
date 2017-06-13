@@ -9,44 +9,35 @@ from decoder import ArgMaxDecoder
 from model import DeepSpeech
 
 parser = argparse.ArgumentParser(description='DeepSpeech prediction')
-parser.add_argument('--sample_rate', default=16000, type=int, help='Sample rate')
-parser.add_argument('--labels_path', default='labels.json', help='Contains all characters for prediction')
 parser.add_argument('--model_path', default='models/deepspeech_final.pth.tar',
                     help='Path to model file created by training')
-parser.add_argument('--window_size', default=.02, type=float, help='Window size for spectrogram in seconds')
-parser.add_argument('--window_stride', default=.01, type=float, help='Window stride for spectrogram in seconds')
-parser.add_argument('--window', default='hamming', help='Window type for spectrogram generation')
 parser.add_argument('--cuda', action="store_true", help='Use cuda to test model')
-parser.add_argument('--val_manifest', metavar='DIR',
-                    help='path to validation manifest csv', default='data/val_manifest.csv')
+parser.add_argument('--test_manifest', metavar='DIR',
+                    help='path to validation manifest csv', default='data/test_manifest.csv')
 parser.add_argument('--batch_size', default=20, type=int, help='Batch size for training')
 parser.add_argument('--num_workers', default=4, type=int, help='Number of workers used in dataloading')
 args = parser.parse_args()
 
 if __name__ == '__main__':
-    model = DeepSpeech.load_model(args.model_path)
-    if args.cuda:
-        model = torch.nn.DataParallel(model).cuda()
+    model = DeepSpeech.load_model(args.model_path, cuda=args.cuda)
     model.eval()
+    print("Loaded model.")
 
-    with open(args.labels_path) as label_file:
-        labels = str(''.join(json.load(label_file)))
+    labels = DeepSpeech.get_labels(model)
+    audio_conf = DeepSpeech.get_audio_conf(model)
     decoder = ArgMaxDecoder(labels)
 
-    audio_conf = dict(sample_rate=args.sample_rate,
-                      window_size=args.window_size,
-                      window_stride=args.window_stride,
-                      window=args.window)
-
-    test_dataset = SpectrogramDataset(audio_conf=audio_conf, manifest_filepath=args.val_manifest, labels=labels,
+    test_dataset = SpectrogramDataset(audio_conf=audio_conf, manifest_filepath=args.test_manifest, labels=labels,
                                       normalize=True)
     test_loader = AudioDataLoader(test_dataset, batch_size=args.batch_size,
                                   num_workers=args.num_workers)
     total_cer, total_wer = 0, 0
+    print("Starting eval...")
     for i, (data) in enumerate(test_loader):
+        print("[%d/%d]" % (i, len(test_loader)))
         inputs, targets, input_percentages, target_sizes = data
 
-        inputs = Variable(inputs)
+        inputs = Variable(inputs, volatile=True)
 
         # unflatten targets
         split_targets = []
@@ -61,7 +52,7 @@ if __name__ == '__main__':
         out = model(inputs)
         out = out.transpose(0, 1)  # TxNxH
         seq_length = out.size(0)
-        sizes = Variable(input_percentages.mul_(int(seq_length)).int())
+        sizes = Variable(input_percentages.mul_(int(seq_length)).int(), volatile=True)
 
         decoded_output = decoder.decode(out.data, sizes)
         target_strings = decoder.process_strings(decoder.convert_to_strings(split_targets))
@@ -75,6 +66,6 @@ if __name__ == '__main__':
     wer = total_wer / len(test_loader.dataset)
     cer = total_cer / len(test_loader.dataset)
 
-    print('Validation Summary \t'
+    print('Test Summary \t'
           'Average WER {wer:.3f}\t'
           'Average CER {cer:.3f}\t'.format(wer=wer * 100, cer=cer * 100))
