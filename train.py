@@ -60,6 +60,7 @@ parser.add_argument('--beam_size', dest='beam_size', type=int, help='Size of bea
 parser.add_argument('--decoder', default='argmax', help='Type of the decoder used for inference.')
 parser.add_argument('--loss', default='CTC', help='Type of loss.')
 
+torch.manual_seed(123)
 
 def to_np(x):
     return x.data.cpu().numpy()

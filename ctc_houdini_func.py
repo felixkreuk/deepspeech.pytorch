@@ -31,17 +31,17 @@ class _ctc_houdini_loss(Function):
         ctc = _CTC()
 
         # predict y_hat [as in argmax y_hat = phi(x,y) + L]
-        self.y_hat = self.decoder.decode(acts.data, act_lens)
+        y_hat = self.decoder.decode(acts.data, act_lens)
         # translate string prediction to tensors of labels
-        self.y_hat_labels, self.y_hat_label_lens = self.decoder.strings_to_labels(self.y_hat)
-        self.y_hat_labels, self.y_hat_label_lens = Variable(self.y_hat_labels), Variable(self.y_hat_label_lens)
+        y_hat_labels, y_hat_label_lens = self.decoder.strings_to_labels(y_hat)
+        y_hat_labels, y_hat_label_lens = Variable(y_hat_labels), Variable(y_hat_label_lens)
 
         # calc delta
         delta = ctc(acts, labels, act_lens, label_lens)
         y_ctc_grad = ctc.grads
-        delta -= ctc(acts, self.y_hat_labels, act_lens, self.y_hat_label_lens)
+        delta -= ctc(acts, y_hat_labels, act_lens, y_hat_label_lens)
         y_hat_ctc_grad = ctc.grads
-        delta /= len(self.y_hat)
+        delta /= len(y_hat)
 
         # calc grad
         coeff = (-0.5) * torch.pow(delta, 2).data
