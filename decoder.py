@@ -180,3 +180,21 @@ class BeamSearchDecoder(Decoder):
             decoded = ctc_beamsearch(b_probs, alphabet=self.labels, blank_symbol='_', k=self.beam_size)
             strings.append(decoded)
         return self.process_strings(strings, remove_repetitions=True)
+
+
+class PrefixBeamSearchDecoder(Decoder):
+    def __init__(self, labels, beam_size=12):
+        super(PrefixBeamSearchDecoder, self).__init__(labels=labels)
+        self.beam_size = beam_size
+
+    def decode(self, probs, sizes=None):
+        from prefix_search import decoder
+        strings = []
+        probs_transpose = probs.transpose(0, 1).cpu()
+
+        # iterate over probability distribution in each batch [due to API of ctc_beamsearch]
+        for batch_idx in xrange(probs.size(1)):
+            b_probs = probs_transpose[batch_idx].numpy()
+            decoded = decoder(b_probs, alphabet=self.labels, blank='_', beam=self.beam_size)
+            strings.append(decoded)
+        return self.process_strings(strings, remove_repetitions=True)

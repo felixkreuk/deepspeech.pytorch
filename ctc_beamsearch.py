@@ -56,7 +56,8 @@ def ctc_beamsearch(input_dist, alphabet, blank_symbol, k=10):
 
     # out_ind = np.argmax([Pr[i]/len(B[i]) if len(B[i]) > 0 else -1e10 for i in range(len(B))])
     out_ind = np.argmax([Pr[i] for i in range(len(B))])
-    return B[out_ind]
+    # return B[out_ind]
+    return B
 
 
 if __name__ == '__main__':

@@ -3,6 +3,7 @@ import errno
 import json
 import os
 import time
+import numpy as np
 
 import torch
 from torch.autograd import Variable
@@ -11,7 +12,7 @@ from ctc_hinge_func import ctc_hinge_loss
 from ctc_houdini_func import ctc_houdini_loss
 
 from data.data_loader import AudioDataLoader, SpectrogramDataset
-from decoder import ArgMaxDecoder, BeamSearchDecoder
+from decoder import ArgMaxDecoder, BeamSearchDecoder, PrefixBeamSearchDecoder
 from model import DeepSpeech, supported_rnns
 
 parser = argparse.ArgumentParser(description='DeepSpeech training')
@@ -131,10 +132,17 @@ def main():
     with open(args.labels_path) as label_file:
         labels = str(''.join(json.load(label_file)))
 
+    # SET DECODER
     if args.decoder == 'beamsearch':
         decoder = BeamSearchDecoder(labels, beam_size=args.beam_size)
+        print("Using beam-search decoder.")
+    elif args.decoder == 'prefix':
+        decoder = PrefixBeamSearchDecoder(labels, beam_size=args.beam_size)
+        print("Using prefix-search decoder.")
     else:
         decoder = ArgMaxDecoder(labels)
+
+    # SET LOSS FUNCTION
     if args.loss == 'ctc_hinge':
         criterion = ctc_hinge_loss(decoder, aug_loss=1)
     elif args.loss == 'houdini':
@@ -224,7 +232,14 @@ def main():
     losses = AverageMeter()
 
     print("Starting training...")
+    if args.visdom:
+        epoch_losses_win = viz.line(
+            X=np.array([0]),
+            Y=np.array([0]),
+        )
     for epoch in range(start_epoch, args.epochs):
+        epoch_losses = []
+
         model.train()
         end = time.time()
         for i, (data) in enumerate(train_loader, start=start_iter):
@@ -248,6 +263,17 @@ def main():
 
             loss = criterion(out, targets, sizes, target_sizes)
             loss = loss / inputs.size(0)  # average the loss by minibatch
+
+            # IN EPOCH LOSSES PLOT START
+            if args.visdom:
+                epoch_losses.append(loss.data[0])
+                viz.line(
+                    X=np.array(range(1, len(epoch_losses)+1)),
+                    Y=np.array(epoch_losses),
+                    win=epoch_losses_win,
+                    update='replace'
+                )
+            # IN EPOCH LOSSES PLOT END
 
             # TODO START OF TEST SECTION
             if loss.data.sum() < 0:

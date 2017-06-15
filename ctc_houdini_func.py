@@ -4,20 +4,16 @@ from torch.autograd import Function, Variable
 from torch.nn import Module
 from warpctc_pytorch import CTCLoss, _CTC
 import numpy as np
+import Levenshtein as Lev
 
 
 class _ctc_houdini_loss(Function):
-    def __init__(self, decoder, cuda=False):
+    def __init__(self, decoder, task_loss=Lev.distance, cuda=False):
         self.decoder = decoder
         self.grads = None
-        self.y_hat = None
-        self.y_hat_labels = None
-        self.y_hat_label_lens = None
-        self.y_hat_ctc_grad = None
-        self.y_ctc_grad = None
-        self.delta = None
         self.coeff = 1 / np.sqrt(2 * np.pi)
         self.cuda = cuda
+        self.task_loss = task_loss
 
     def forward(self, acts, labels, act_lens, label_lens):
         """
@@ -30,25 +26,34 @@ class _ctc_houdini_loss(Function):
                                              Variable(label_lens)
         ctc = _CTC()
 
-        # predict y_hat [as in argmax y_hat = phi(x,y) + L]
+        ### PREDICT y_hat ###
         y_hat = self.decoder.decode(acts.data, act_lens)
         # translate string prediction to tensors of labels
         y_hat_labels, y_hat_label_lens = self.decoder.strings_to_labels(y_hat)
         y_hat_labels, y_hat_label_lens = Variable(y_hat_labels), Variable(y_hat_label_lens)
 
-        # calc delta
+        ### CONVERT y TO STRINGS ###
+        split_targets = []
+        offset = 0
+        for size in label_lens.data:
+            split_targets.append(labels.data[offset:offset + size])
+            offset += size
+        y_strings = self.decoder.convert_to_strings(split_targets)
+
+        ### CALC ACTUAL LOSS ###
+        # task loss [cer by default]
+        batch_task_loss = sum([self.task_loss(s1, s2) for s1, s2 in zip(y_strings, y_hat)])
+        # calc delta & grads
         delta = ctc(acts, labels, act_lens, label_lens)
         y_ctc_grad = ctc.grads
         delta -= ctc(acts, y_hat_labels, act_lens, y_hat_label_lens)
         y_hat_ctc_grad = ctc.grads
-        delta /= len(y_hat)
-
         # calc grad
         coeff = (-0.5) * torch.pow(delta, 2).data
         coeff = (self.coeff * torch.exp(coeff))[0]
-        self.grads = (y_ctc_grad - y_hat_ctc_grad) * coeff
+        self.grads = (y_ctc_grad - y_hat_ctc_grad) * coeff * batch_task_loss
 
-        return delta.data
+        return torch.FloatTensor([batch_task_loss])
 
     def backward(self, grad_output):
         return self.grads, None, None, None
