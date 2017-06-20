@@ -142,10 +142,7 @@ class DeepSpeech(nn.Module):
             'rnn_type': supported_rnns_inv.get(model._rnn_type, model._rnn_type.__name__.lower()),
             'audio_conf': model._audio_conf,
             'labels': model._labels,
-            'state_dict': model.state_dict(),
-            'loss_results': None,
-            'cer_results': None,
-            'wer_results': None
+            'state_dict': model.state_dict()
         }
         if optimizer is not None:
             package['optim_dict'] = optimizer.state_dict()

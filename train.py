@@ -11,6 +11,7 @@ from warpctc_pytorch import CTCLoss
 from ctc_hinge_func import ctc_hinge_loss
 from ctc_houdini_func import ctc_houdini_loss
 
+from data.bucketing_sampler import BucketingSampler, SpectrogramDatasetWithLength
 from data.data_loader import AudioDataLoader, SpectrogramDataset
 from decoder import ArgMaxDecoder, BeamSearchDecoder, PrefixBeamSearchDecoder
 from model import DeepSpeech, supported_rnns
@@ -55,11 +56,14 @@ parser.add_argument('--noise_max', default=0.5,
 parser.add_argument('--tensorboard', dest='tensorboard', action='store_true', help='Turn on tensorboard graphing')
 parser.add_argument('--log_dir', default='visualize/deepspeech_final', help='Location of tensorboard log')
 parser.add_argument('--log_params', dest='log_params', action='store_true', help='Log parameter values and gradients')
+parser.add_argument('--no_bucketing', dest='no_bucketing', action='store_false',
+                    help='Turn off bucketing and sample from dataset based on sequence length (smallest to largest)')
 parser.set_defaults(cuda=False, silent=False, checkpoint=False, visdom=False, augment=False, tensorboard=False,
-                    log_params=False)
+                    log_params=False, no_bucketing=False)
 parser.add_argument('--beam_size', dest='beam_size', type=int, help='Size of beam in decoder beam search.')
 parser.add_argument('--decoder', default='argmax', help='Type of the decoder used for inference.')
 parser.add_argument('--loss', default='CTC', help='Type of loss.')
+parser.add_argument('--optimizer', default='sgd', help='Type of loss.')
 
 torch.manual_seed(123)
 
@@ -93,9 +97,10 @@ def main():
     loss_results, cer_results, wer_results = torch.Tensor(args.epochs), torch.Tensor(args.epochs), torch.Tensor(
         args.epochs)
     if args.visdom:
-        print("Using visdom.")
         from visdom import Visdom
         viz = Visdom()
+        print("===> Using visdom.")
+        viz.text(str(args))
 
         opts = [dict(title='Loss', ylabel='Loss', xlabel='Epoch'),
                 dict(title='WER', ylabel='WER', xlabel='Epoch'),
@@ -132,22 +137,25 @@ def main():
     with open(args.labels_path) as label_file:
         labels = str(''.join(json.load(label_file)))
 
-    # SET DECODER
+    ### SET DECODER ###
     if args.decoder == 'beamsearch':
         decoder = BeamSearchDecoder(labels, beam_size=args.beam_size)
-        print("Using beam-search decoder.")
+        print("===> Using beam-search decoder.")
     elif args.decoder == 'prefix':
         decoder = PrefixBeamSearchDecoder(labels, beam_size=args.beam_size)
-        print("Using prefix-search decoder.")
+        print("===> Using prefix-search decoder.")
     else:
         decoder = ArgMaxDecoder(labels)
 
-    # SET LOSS FUNCTION
+    ### SET LOSS FUNCTION ###
     if args.loss == 'ctc_hinge':
+        print("===> Using CTC-Hinge")
         criterion = ctc_hinge_loss(decoder, aug_loss=1)
     elif args.loss == 'houdini':
-        criterion = ctc_houdini_loss(decoder, cuda=args.cuda)
+        print("===> Using CTC-Houdini")
+        criterion = ctc_houdini_loss(decoder, min_coeff=args.lr, cuda=args.cuda)
     else:
+        print("===> Using CTC")
         criterion = CTCLoss()
 
     audio_conf = dict(sample_rate=args.sample_rate,
@@ -176,40 +184,54 @@ def main():
                        audio_conf=audio_conf,
                        bidirectional=True)
     parameters = model.parameters()
-    optimizer = torch.optim.SGD(parameters, lr=args.lr,
-                                momentum=args.momentum, nesterov=True)
+
+    ### SET OPTIMIZER ###
+    optimizer = None
+    if args.optimizer == 'adam':
+        print("===> Using Adam optimizer.")
+        optimizer = torch.optim.Adam(parameters, lr=args.lr)
+    elif args.optimizer == 'adagrad':
+        print("===> Using AdaGrad optimizer.")
+        optimizer = torch.optim.Adagrad(parameters, lr=args.lr)
+    elif args.optimizer == 'adadelta':
+        print("===> Using AdaDelta optimizer.")
+        optimizer = torch.optim.Adadelta(parameters, lr=args.lr)
+    else:
+        print("===> Using SGD optimizer.")
+        optimizer = torch.optim.SGD(parameters, lr=args.lr, momentum=args.momentum, nesterov=True)
 
     if args.continue_from:
         print("Loading checkpoint model %s" % args.continue_from)
         package = torch.load(args.continue_from)
         model.load_state_dict(package['state_dict'])
-        optimizer.load_state_dict(package['optim_dict'])
-        start_epoch = int(package.get('epoch', 1)) - 1  # Python index start at 0 for training
-        start_iter = package.get('iteration', None)
-        if start_iter is None:
-            start_epoch += 1  # Assume that we saved a model after an epoch finished, so start at the next epoch.
-            start_iter = 0
-        else:
-            start_iter += 1
+        # optimizer.load_state_dict(package['optim_dict'])
+        # start_epoch = int(package.get('epoch', 1)) - 1  # Python index start at 0 for training
+        # start_iter = package.get('iteration', None)
+        # if start_iter is None:
+        #     start_epoch += 1  # Assume that we saved a model after an epoch finished, so start at the next epoch.
+        #     start_iter = 0
+        # else:
+        #     start_iter += 1
+        avg_loss = 0  # TODO
+        start_epoch = 0  # TODO
+        start_iter = 0 # TODO
         avg_loss = int(package.get('avg_loss', 0))
-        if args.visdom and \
-                        package['loss_results'] is not None and start_epoch > 0:  # Add previous scores to visdom graph
-            epoch = start_epoch
-            loss_results[0:epoch], cer_results[0:epoch], wer_results[0:epoch] = package['loss_results'], package[
-                'cer_results'], package['wer_results']
-            x_axis = epochs[0:epoch]
-            y_axis = [loss_results[0:epoch], wer_results[0:epoch], cer_results[0:epoch]]
-            for x in range(len(viz_windows)):
-                viz_windows[x] = viz.line(
-                    X=x_axis,
-                    Y=y_axis[x],
-                    opts=opts[x],
-                )
+        # if args.visdom and \
+        #                 package['loss_results'] is not None and start_epoch > 0:  # Add previous scores to visdom graph
+        #     epoch = start_epoch
+        #     loss_results[0:epoch], cer_results[0:epoch], wer_results[0:epoch] = package['loss_results'], package[
+        #         'cer_results'], package['wer_results']
+        #     x_axis = epochs[0:epoch]
+        #     y_axis = [loss_results[0:epoch], wer_results[0:epoch], cer_results[0:epoch]]
+        #     for x in range(len(viz_windows)):
+        #         viz_windows[x] = viz.line(
+        #             X=x_axis,
+        #             Y=y_axis[x],
+        #             opts=opts[x],
+        #         )
         if args.tensorboard and \
                         package['loss_results'] is not None and start_epoch > 0:  # Previous scores to tensorboard logs
-            loss_results, cer_results, wer_results = package['loss_results'], package['cer_results'], package[
-                'wer_results']
-            for i in range(len(loss_results)):
+            for i in range(start_epoch):
                 info = {
                     'Avg Train Loss': loss_results[i],
                     'Avg WER': wer_results[i],
@@ -320,6 +342,8 @@ def main():
                                                 loss_results=loss_results,
                                                 wer_results=wer_results, cer_results=cer_results, avg_loss=avg_loss),
                            file_path)
+            del loss
+            del out
         avg_loss /= len(train_loader)
 
         print('Training Summary Epoch: [{0}]\t'
@@ -360,20 +384,20 @@ def main():
 
             if args.cuda:
                 torch.cuda.synchronize()
+            del out
         wer = total_wer / len(test_loader.dataset)
         cer = total_cer / len(test_loader.dataset)
         wer *= 100
         cer *= 100
-
+        loss_results[epoch] = avg_loss
+        wer_results[epoch] = wer
+        cer_results[epoch] = cer
         print('Validation Summary Epoch: [{0}]\t'
               'Average WER {wer:.3f}\t'
               'Average CER {cer:.3f}\t'.format(
             epoch + 1, wer=wer, cer=cer))
 
         if args.visdom:
-            loss_results[epoch] = avg_loss
-            wer_results[epoch] = wer
-            cer_results[epoch] = cer
             # epoch += 1
             x_axis = epochs[0:epoch + 1]
             y_axis = [loss_results[0:epoch + 1], wer_results[0:epoch + 1], cer_results[0:epoch + 1]]
@@ -392,9 +416,6 @@ def main():
                         update='replace',
                     )
         if args.tensorboard:
-            loss_results[epoch] = avg_loss
-            wer_results[epoch] = wer
-            cer_results[epoch] = cer
             info = {
                 'Avg Train Loss': avg_loss,
                 'Avg WER': wer,
@@ -419,6 +440,14 @@ def main():
         print('Learning rate annealed to: {lr:.6f}'.format(lr=optim_state['param_groups'][0]['lr']))
 
         avg_loss = 0
+        if not args.no_bucketing and epoch == 0:
+            print("Switching to bucketing sampler for following epochs")
+            train_dataset = SpectrogramDatasetWithLength(audio_conf=audio_conf, manifest_filepath=args.train_manifest,
+                                                         labels=labels,
+                                                         normalize=True, augment=args.augment)
+            sampler = BucketingSampler(train_dataset)
+            train_loader.sampler = sampler
+
     torch.save(DeepSpeech.serialize(model, optimizer=optimizer), args.final_model_path)
 
 

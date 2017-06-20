@@ -89,7 +89,7 @@ def check_last_word(l_plus, lexicon):
         return np.log(0.5)
 
 
-def decoder(x, alphabet, blank, beam=20, alpha=1.0, beta=1.0):
+def decoder(x, alphabet, blank, beam=20, alpha=1.0, beta=.1):
     # probs = np.log(x)
     probs = x
 
