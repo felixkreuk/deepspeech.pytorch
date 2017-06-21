@@ -6,6 +6,7 @@ from warpctc_pytorch import CTCLoss, _CTC
 import numpy as np
 import Levenshtein as Lev
 import math
+from utils import border_msg
 
 
 class _ctc_houdini_loss(Function):
@@ -30,6 +31,7 @@ class _ctc_houdini_loss(Function):
 
         ### PREDICT y_hat ###
         y_hat = self.decoder.decode(acts.data, act_lens)
+        y_hat = self.decoder.process_strings(y_hat, remove_repetitions=True)
         # translate string prediction to tensors of labels
         y_hat_labels, y_hat_label_lens = self.decoder.strings_to_labels(y_hat)
         y_hat_labels, y_hat_label_lens = Variable(y_hat_labels), Variable(y_hat_label_lens)
@@ -42,12 +44,16 @@ class _ctc_houdini_loss(Function):
             offset += size
         y_strings = self.decoder.convert_to_strings(split_targets)
 
+        border_msg(" PREDICTIONS ")
         for a,b in zip(y_strings,y_hat):
             print "\t\"%s\" ### \"%s\"" % (a,b)
 
         ### CALC ACTUAL LOSS ###
         # task loss [cer by default]
-        batch_task_loss = sum([self.task_loss(s1, s2) for s1, s2 in zip(y_strings, y_hat)])
+        batch_task_loss = [1.0 * self.task_loss(s1, s2) / len(s1) for s1, s2 in zip(y_strings, y_hat)]
+        border_msg(" EDs ")
+        print batch_task_loss
+        batch_task_loss = sum(batch_task_loss)
 
         # calc delta & grads
         delta = ctc(acts, labels, act_lens, label_lens)
@@ -55,21 +61,21 @@ class _ctc_houdini_loss(Function):
         delta -= ctc(acts, y_hat_labels, act_lens, y_hat_label_lens)
         y_hat_ctc_grad = ctc.grads
 
-        print "delta:",delta
 
         # for i in xrange(min(len(y_strings[0]), len(y_hat[0]))):
         #     print "diff %s,%s: %s" % (y_strings[0][i], y_hat[0][i], y_hat_ctc_grad[i] - y_ctc_grad[i])
 
+        border_msg(" NUMBERS ")
+        print "delta:",delta
         # calc & clip coeff
         coeff = (-0.5) * torch.pow(delta, 2).data
         coeff = (self.coeff * torch.exp(coeff))[0]
-        print("coeff (before clip) =",coeff)
+        print "coeff (before clip) =", coeff
         if coeff < 1e-10 or math.isnan(coeff) or math.isinf(coeff):
             coeff = 1
-        print("coeff (after clip) =",coeff,"\n")
+        print "coeff (after clip) =", coeff
 
         # calc grad
-        # self.grads = (y_hat_ctc_grad - y_ctc_grad) * coeff * batch_task_loss
         self.grads = (-y_hat_ctc_grad + y_ctc_grad) * coeff * batch_task_loss
 
         return torch.FloatTensor([batch_task_loss])
