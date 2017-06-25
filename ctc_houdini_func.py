@@ -30,8 +30,15 @@ class _ctc_houdini_loss(Function):
         ctc = _CTC()
 
         ### PREDICT y_hat ###
-        y_hat = self.decoder.decode(acts.data, act_lens)
-        y_hat = self.decoder.process_strings(y_hat, remove_repetitions=True)
+        y_hat1 = self.decoder.decode(acts.data, act_lens)
+
+        # TODO: delete? is this helping?
+        # TODO: edge case - ee => e, bad in "three"
+        y_hat = self.decoder.process_strings(y_hat1)
+        for a,b in zip(y_hat1,y_hat):
+            if a != b:
+                print a," != ",b
+
         # translate string prediction to tensors of labels
         y_hat_labels, y_hat_label_lens = self.decoder.strings_to_labels(y_hat)
         y_hat_labels, y_hat_label_lens = Variable(y_hat_labels), Variable(y_hat_label_lens)
@@ -46,21 +53,22 @@ class _ctc_houdini_loss(Function):
 
         border_msg(" PREDICTIONS ")
         for a,b in zip(y_strings,y_hat):
-            print "\t\"%s\" ### \"%s\"" % (a,b)
+            print "\t\"%s\" --- \"%s\"" % (a,b)
 
         ### CALC ACTUAL LOSS ###
-        # task loss [cer by default]
+        border_msg(" TASK LOSS ")
         batch_task_loss = [1.0 * self.task_loss(s1, s2) / len(s1) for s1, s2 in zip(y_strings, y_hat)]
-        border_msg(" EDs ")
         print batch_task_loss
         batch_task_loss = sum(batch_task_loss)
+        # batch_task_loss /= len(y_hat)  # TODO: normalize?
 
         # calc delta & grads
         delta = ctc(acts, labels, act_lens, label_lens)
         y_ctc_grad = ctc.grads
         delta -= ctc(acts, y_hat_labels, act_lens, y_hat_label_lens)
         y_hat_ctc_grad = ctc.grads
-
+        # delta /= len(y_hat)  # TODO: normalize? i think so because otherwise delta is the sum of all ctcs?
+                               # TODO: perhaps not, because loss is divided by batch size (not sure, check)?
 
         # for i in xrange(min(len(y_strings[0]), len(y_hat[0]))):
         #     print "diff %s,%s: %s" % (y_strings[0][i], y_hat[0][i], y_hat_ctc_grad[i] - y_ctc_grad[i])
@@ -70,10 +78,11 @@ class _ctc_houdini_loss(Function):
         # calc & clip coeff
         coeff = (-0.5) * torch.pow(delta, 2).data
         coeff = (self.coeff * torch.exp(coeff))[0]
-        print "coeff (before clip) =", coeff
-        if coeff < 1e-10 or math.isnan(coeff) or math.isinf(coeff):
+        print "coeff (before clip) = %.8f" % coeff
+        if coeff < 1e-5 or math.isnan(coeff) or math.isinf(coeff):
             coeff = 1
-        print "coeff (after clip) =", coeff
+        print "coeff (after clip) = %.8f" % coeff
+        print "\n%s\n" % ("#" * 50)
 
         # calc grad
         self.grads = (-y_hat_ctc_grad + y_ctc_grad) * coeff * batch_task_loss
