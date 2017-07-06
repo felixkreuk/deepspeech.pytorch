@@ -13,8 +13,11 @@ from ctc_houdini_func import ctc_houdini_loss
 
 from data.bucketing_sampler import BucketingSampler, SpectrogramDatasetWithLength
 from data.data_loader import AudioDataLoader, SpectrogramDataset
-from decoder import ArgMaxDecoder, BeamSearchDecoder, PrefixBeamSearchDecoder
+from decoder import GreedyDecoder, SecondGreedyDecoder, PrefixBeamSearchDecoder, InacurateGreedyDecoder
 from model import DeepSpeech, supported_rnns
+from yellowfin import YFOptimizer
+
+# from data.synth_data import create_data
 
 parser = argparse.ArgumentParser(description='DeepSpeech training')
 parser.add_argument('--train_manifest', metavar='DIR',
@@ -139,18 +142,19 @@ def main():
 
     ### SET DECODER ###
     if args.decoder == 'beamsearch':
-        decoder = BeamSearchDecoder(labels, beam_size=args.beam_size)
+        decoder = GreedyDecoder(labels)
         print("===> Using beam-search decoder.")
     elif args.decoder == 'prefix':
         decoder = PrefixBeamSearchDecoder(labels, beam_size=args.beam_size)
         print("===> Using prefix-search decoder.")
     else:
-        decoder = ArgMaxDecoder(labels)
+        decoder = GreedyDecoder(labels)
+        print("===> Using argmax decoder.")
 
     ### SET LOSS FUNCTION ###
     if args.loss == 'ctc_hinge':
         print("===> Using CTC-Hinge")
-        criterion = ctc_hinge_loss(decoder, aug_loss=1)
+        criterion = ctc_hinge_loss(decoder, aug_loss=1, cuda=args.cuda)
     elif args.loss == 'houdini':
         print("===> Using CTC-Houdini")
         criterion = ctc_houdini_loss(decoder, min_coeff=args.lr, cuda=args.cuda)
@@ -186,7 +190,6 @@ def main():
     parameters = model.parameters()
 
     ### SET OPTIMIZER ###
-    optimizer = None
     if args.optimizer == 'adam':
         print("===> Using Adam optimizer.")
         optimizer = torch.optim.Adam(parameters, lr=args.lr)
@@ -196,6 +199,9 @@ def main():
     elif args.optimizer == 'adadelta':
         print("===> Using AdaDelta optimizer.")
         optimizer = torch.optim.Adadelta(parameters, lr=args.lr)
+    elif args.optimizer == 'yf':
+        print("===> Using YellowFin optimizer.")
+        optimizer = YFOptimizer(parameters, lr=1.0, mu=0.0, weight_decay=5e-4)
     else:
         print("===> Using SGD optimizer.")
         optimizer = torch.optim.SGD(parameters, lr=args.lr, momentum=args.momentum, nesterov=True)
@@ -239,6 +245,13 @@ def main():
                 }
                 for tag, val in info.items():
                     logger.scalar_summary(tag, val, i + 1)
+        if not args.no_bucketing:
+            print("Using bucketing sampler for the following epochs")
+            train_dataset = SpectrogramDatasetWithLength(audio_conf=audio_conf, manifest_filepath=args.train_manifest,
+                                                         labels=labels,
+                                                         normalize=True, augment=args.augment)
+            sampler = BucketingSampler(train_dataset)
+            train_loader.sampler = sampler
     else:
         avg_loss = 0
         start_epoch = 0
@@ -246,12 +259,15 @@ def main():
     if args.cuda:
         model = torch.nn.DataParallel(model).cuda()
 
-    print(model)
-    print("Number of parameters: %d" % DeepSpeech.get_param_size(model))
+    # print(model)
+    # print("Number of parameters: %d" % DeepSpeech.get_param_size(model))
 
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
+
+    prev_cer = 0
+    no_improve = 0
 
     print("Starting training...")
     if args.visdom:
@@ -264,6 +280,7 @@ def main():
 
         model.train()
         end = time.time()
+
         for i, (data) in enumerate(train_loader, start=start_iter):
             if i == len(train_loader):
                 break
@@ -286,6 +303,23 @@ def main():
             loss = criterion(out, targets, sizes, target_sizes)
             loss = loss / inputs.size(0)  # average the loss by minibatch
 
+            ######################################################################################
+            ### PREDICT y_hat ###
+            y_hat1 = decoder.decode(out.data, sizes.data)
+            y_hat = decoder.process_strings(y_hat1)
+
+            ### CONVERT y TO STRINGS ###
+            split_targets = []
+            offset = 0
+            for size in target_sizes.data:
+                split_targets.append(targets.data[offset:offset + size])
+                offset += size
+            y_strings = decoder.convert_to_strings(split_targets)
+
+            for a, b in zip(y_strings, y_hat):
+                print "\t\"%s\" (%d) --- \"%s\" (%d)" % (a, len(a), b, len(b))
+            ######################################################################################
+
             # IN EPOCH LOSSES PLOT START
             if args.visdom:
                 epoch_losses.append(loss.data[0])
@@ -297,11 +331,9 @@ def main():
                 )
             # IN EPOCH LOSSES PLOT END
 
-            # TODO START OF TEST SECTION
             if loss.data.sum() < 0:
                 print "Loss < 0, skipping."
                 continue
-            # TODO END OF TEST SECTION
 
             loss_sum = loss.data.sum()
             inf = float("inf")
@@ -371,7 +403,7 @@ def main():
             out = model(inputs)
             out = out.transpose(0, 1)  # TxNxH
             seq_length = out.size(0)
-            sizes = Variable(input_percentages.mul_(int(seq_length)).int(), volatile=True)
+            sizes = input_percentages.mul_(int(seq_length)).int()
 
             decoded_output = decoder.decode(out.data, sizes)
             target_strings = decoder.process_strings(decoder.convert_to_strings(split_targets))
@@ -433,11 +465,30 @@ def main():
             torch.save(DeepSpeech.serialize(model, optimizer=optimizer, epoch=epoch, loss_results=loss_results,
                                             wer_results=wer_results, cer_results=cer_results),
                        file_path)
-        # anneal lr
-        optim_state = optimizer.state_dict()
-        optim_state['param_groups'][0]['lr'] = optim_state['param_groups'][0]['lr'] / args.learning_anneal
-        optimizer.load_state_dict(optim_state)
-        print('Learning rate annealed to: {lr:.6f}'.format(lr=optim_state['param_groups'][0]['lr']))
+
+        if cer > prev_cer:
+            no_improve += 1
+        else:
+            no_improve = 0
+
+        if no_improve == 2:
+            no_improve = 0
+            # anneal lr
+            if args.optimizer == 'yf':
+                optimizer.set_lr_factor(optimizer.get_lr_factor() / args.lr)
+                print('Learning rate annealed to: {lr:.6f}'.format(lr=optimizer.get_lr_factor()))
+            else:
+                optim_state = optimizer.state_dict()
+                optim_state['param_groups'][0]['lr'] = optim_state['param_groups'][0]['lr'] / args.learning_anneal
+                optimizer.load_state_dict(optim_state)
+                print('Learning rate annealed to: {lr:.6f}'.format(lr=optim_state['param_groups'][0]['lr']))
+
+        prev_cer = cer
+
+        # if epoch == 0:
+        #     optim_state = optimizer.state_dict()
+        #     optim_state['param_groups'][0]['lr'] = optim_state['param_groups'][0]['lr'] / 100
+        #     print('Learning rate annealed to: {lr:.6f}'.format(lr=optim_state['param_groups'][0]['lr']))
 
         avg_loss = 0
         if not args.no_bucketing and epoch == 0:

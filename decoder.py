@@ -17,8 +17,14 @@
 
 import Levenshtein as Lev
 import torch
+from enum import Enum
 from six.moves import xrange
-
+import random
+try:
+    from pytorch_ctc import CTCBeamDecoder as CTCBD
+    from pytorch_ctc import Scorer, KenLMScorer
+except:
+    print("warn: pytorch_ctc unavailable. Only greedy decoding is supported.")
 
 class Decoder(object):
     """
@@ -43,13 +49,13 @@ class Decoder(object):
         """Given a list of numeric sequences, returns the corresponding strings"""
         strings = []
         for x in xrange(len(sequences)):
-            string = self.convert_to_string(sequences[x])
-            string = string[0:int(sizes.data[x])] if sizes is not None else string
+            seq_len = sizes[x] if sizes is not None else len(sequences[x])
+            string = self._convert_to_string(sequences[x], seq_len)
             strings.append(string)
         return strings
 
-    def convert_to_string(self, sequence):
-        return ''.join([self.int_to_char[i] for i in sequence])
+    def _convert_to_string(self, sequence, sizes):
+        return ''.join([self.int_to_char[sequence[i]] for i in range(sizes)])
 
     def process_strings(self, sequences, remove_repetitions=False):
         """
@@ -147,7 +153,29 @@ class Decoder(object):
         return labels, label_lens
 
 
-class ArgMaxDecoder(Decoder):
+class BeamCTCDecoder(Decoder):
+    def __init__(self, labels, scorer, beam_width=20, top_paths=1, blank_index=0, space_index=28):
+        super(BeamCTCDecoder, self).__init__(labels, blank_index=blank_index, space_index=space_index)
+        self._beam_width = beam_width
+        self._top_n = top_paths
+        try:
+            import pytorch_ctc
+        except ImportError:
+            raise ImportError("BeamCTCDecoder requires pytorch_ctc package.")
+
+        self._decoder = CTCBD(scorer, labels, top_paths=top_paths, beam_width=beam_width,
+                              blank_index=blank_index, space_index=space_index, merge_repeated=False)
+
+
+    def decode(self, probs, sizes=None):
+        sizes = sizes.cpu() if sizes is not None else None
+        out, conf, seq_len = self._decoder.decode(probs.cpu(), sizes)
+
+        # TODO: support returning multiple paths
+        strings = self.convert_to_strings(out[0], sizes=seq_len[0])
+        return self.process_strings(strings)
+
+class GreedyDecoder(Decoder):
     def decode(self, probs, sizes=None):
         """
         Returns the argmax decoding given the probability matrix. Removes
@@ -164,21 +192,42 @@ class ArgMaxDecoder(Decoder):
         return self.process_strings(strings, remove_repetitions=True)
 
 
-class BeamSearchDecoder(Decoder):
-    def __init__(self, labels, beam_size=12):
-        super(BeamSearchDecoder, self).__init__(labels=labels)
-        self.beam_size = beam_size
-
+class SecondGreedyDecoder(Decoder):
     def decode(self, probs, sizes=None):
-        from ctc_beamsearch import ctc_beamsearch
-        strings = []
-        probs_transpose = probs.transpose(0, 1).cpu()
+        """
+        Returns the argmax decoding given the probability matrix. Removes
+        repeated elements in the sequence, as well as blanks.
 
-        # iterate over probability distribution in each batch [due to API of ctc_beamsearch]
-        for batch_idx in xrange(probs.size(1)):
-            b_probs = probs_transpose[batch_idx].numpy()
-            decoded = ctc_beamsearch(b_probs, alphabet=self.labels, blank_symbol='_', k=self.beam_size)
-            strings.append(decoded)
+        Arguments:
+            probs: Tensor of character probabilities from the network. Expected shape of seq_length x batch x output_dim
+            sizes(optional): Size of each sequence in the mini-batch
+        Returns:
+            strings: sequences of the model's best guess for the transcription on inputs
+        """
+        _, max_probs = torch.topk(probs.transpose(0, 1),k=2 ,dim=2)
+        index = torch.LongTensor([1]).cuda()
+        max_probs = max_probs.index_select(dim=2, index=index)
+        strings = self.convert_to_strings(max_probs.view(max_probs.size(0), max_probs.size(1)), sizes)
+        return self.process_strings(strings, remove_repetitions=True)
+
+
+class InacurateGreedyDecoder(Decoder):
+    def decode(self, probs, sizes=None):
+        """
+        Returns the argmax decoding given the probability matrix. Removes
+        repeated elements in the sequence, as well as blanks.
+
+        Arguments:
+            probs: Tensor of character probabilities from the network. Expected shape of seq_length x batch x output_dim
+            sizes(optional): Size of each sequence in the mini-batch
+        Returns:
+            strings: sequences of the model's best guess for the transcription on inputs
+        """
+        _, max_probs = torch.max(probs.transpose(0, 1), 2)
+        error_idx = random.randint(0, len(probs) - 1)
+        error_frame = random.randint(0, len(probs) - 1)
+        max_probs[error_idx] = error_frame
+        strings = self.convert_to_strings(max_probs.view(max_probs.size(0), max_probs.size(1)), sizes)
         return self.process_strings(strings, remove_repetitions=True)
 
 
@@ -195,6 +244,6 @@ class PrefixBeamSearchDecoder(Decoder):
         # iterate over probability distribution in each batch [due to API of ctc_beamsearch]
         for batch_idx in xrange(probs.size(1)):
             b_probs = probs_transpose[batch_idx].numpy()
-            decoded = decoder(b_probs, alphabet=self.labels, blank='_', beam=self.beam_size)
+            decoded = decoder(b_probs, alphabet=self.labels, blank='_', beam=self.beam_size, alpha=1, beta=1)
             strings.append(decoded)
         return self.process_strings(strings, remove_repetitions=True)
