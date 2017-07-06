@@ -405,7 +405,7 @@ def main():
             seq_length = out.size(0)
             sizes = input_percentages.mul_(int(seq_length)).int()
 
-            decoded_output = decoder.decode(out.data, sizes)
+            decoded_output, _, _ = decoder.decode(out.data, sizes)
             target_strings = decoder.process_strings(decoder.convert_to_strings(split_targets))
             wer, cer = 0, 0
             for x in range(len(target_strings)):
