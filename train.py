@@ -7,15 +7,17 @@ import numpy as np
 
 import torch
 from torch.autograd import Variable
-from warpctc_pytorch import CTCLoss
+# from warpctc_pytorch import CTCLoss
+from my_ctc import CTCLoss
 from ctc_hinge_func import ctc_hinge_loss
 from ctc_houdini_func import ctc_houdini_loss
 
 from data.bucketing_sampler import BucketingSampler, SpectrogramDatasetWithLength
 from data.data_loader import AudioDataLoader, SpectrogramDataset
-from decoder import GreedyDecoder, SecondGreedyDecoder, PrefixBeamSearchDecoder, InacurateGreedyDecoder
+from decoder import GreedyDecoder, PrefixBeamSearchDecoder
 from model import DeepSpeech, supported_rnns
 from yellowfin import YFOptimizer
+from torch.utils.data.sampler import SubsetRandomSampler
 
 # from data.synth_data import create_data
 
@@ -142,14 +144,14 @@ def main():
 
     ### SET DECODER ###
     if args.decoder == 'beamsearch':
-        decoder = GreedyDecoder(labels)
+        decoder = GreedyDecoder(labels, cuda=args.cuda)
         print("===> Using beam-search decoder.")
     elif args.decoder == 'prefix':
         decoder = PrefixBeamSearchDecoder(labels, beam_size=args.beam_size)
         print("===> Using prefix-search decoder.")
     else:
-        decoder = GreedyDecoder(labels)
-        print("===> Using argmax decoder.")
+        decoder = GreedyDecoder(labels, cuda=args.cuda)
+        print("===> Using argmax decoder (cuda=%s)." % args.cuda)
 
     ### SET LOSS FUNCTION ###
     if args.loss == 'ctc_hinge':
@@ -175,9 +177,10 @@ def main():
     test_dataset = SpectrogramDataset(audio_conf=audio_conf, manifest_filepath=args.val_manifest, labels=labels,
                                       normalize=True, augment=False)
     train_loader = AudioDataLoader(train_dataset, batch_size=args.batch_size,
-                                   num_workers=args.num_workers)
+                                   num_workers=args.num_workers, sampler=SubsetRandomSampler(range(50)))
     test_loader = AudioDataLoader(test_dataset, batch_size=args.batch_size,
-                                  num_workers=args.num_workers)
+                                  num_workers=args.num_workers, sampler=SubsetRandomSampler(range(10)))
+    test_loader = train_loader  # todo
 
     rnn_type = args.rnn_type.lower()
     assert rnn_type in supported_rnns, "rnn_type should be either lstm, rnn or gru"
@@ -484,20 +487,15 @@ def main():
                 print('Learning rate annealed to: {lr:.6f}'.format(lr=optim_state['param_groups'][0]['lr']))
 
         prev_cer = cer
-
-        # if epoch == 0:
-        #     optim_state = optimizer.state_dict()
-        #     optim_state['param_groups'][0]['lr'] = optim_state['param_groups'][0]['lr'] / 100
-        #     print('Learning rate annealed to: {lr:.6f}'.format(lr=optim_state['param_groups'][0]['lr']))
-
         avg_loss = 0
-        if not args.no_bucketing and epoch == 0:
-            print("Switching to bucketing sampler for following epochs")
-            train_dataset = SpectrogramDatasetWithLength(audio_conf=audio_conf, manifest_filepath=args.train_manifest,
-                                                         labels=labels,
-                                                         normalize=True, augment=args.augment)
-            sampler = BucketingSampler(train_dataset)
-            train_loader.sampler = sampler
+        # print not args.no_bucketing, epoch==0
+        # if not args.no_bucketing and epoch == 0:
+        #     print("Switching to bucketing sampler for following epochs")
+        #     train_dataset = SpectrogramDatasetWithLength(audio_conf=audio_conf, manifest_filepath=args.train_manifest,
+        #                                                  labels=labels,
+        #                                                  normalize=True, augment=args.augment)
+        #     sampler = BucketingSampler(train_dataset)
+        #     train_loader.sampler = sampler
 
     torch.save(DeepSpeech.serialize(model, optimizer=optimizer), args.final_model_path)
 

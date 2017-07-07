@@ -37,13 +37,14 @@ class Decoder(object):
         space_index (int, optional): index for the space ' ' character. Defaults to 28.
     """
 
-    def __init__(self, labels, blank_index=0, space_index=28):
+    def __init__(self, labels, blank_index=0, space_index=28, cuda=False):
         # e.g. labels = "_'ABCDEFGHIJKLMNOPQRSTUVWXYZ#"
         self.labels = labels
         self.int_to_char = dict([(i, c) for (i, c) in enumerate(labels)])
         self.char_to_int = dict([(c, i) for i, c in self.int_to_char.iteritems()])
         self.blank_index = blank_index
         self.space_index = space_index
+        self.cuda = cuda
 
     def convert_to_strings(self, sequences, sizes=None):
         """Given a list of numeric sequences, returns the corresponding strings"""
@@ -190,55 +191,16 @@ class GreedyDecoder(Decoder):
         max_probs_val, max_probs = torch.max(probs.transpose(0, 1), 2)
         max_probs_val = torch.cumprod(max_probs_val, 1)
         index = torch.LongTensor([max_probs_val.size(1) - 1])
+        if self.cuda: index = index.cuda()
         max_probs_val = max_probs_val.index_select(dim=1, index=index)
         max_probs_val = max_probs_val.view(-1)
         max_paths     = max_probs.view(max_probs.size(0), max_probs.size(1))
         strings = self.convert_to_strings(max_probs.view(max_probs.size(0), max_probs.size(1)), sizes)
         return self.process_strings(strings, remove_repetitions=True), max_paths, max_probs_val
 
-
-class SecondGreedyDecoder(Decoder):
-    def decode(self, probs, sizes=None):
-        """
-        Returns the argmax decoding given the probability matrix. Removes
-        repeated elements in the sequence, as well as blanks.
-
-        Arguments:
-            probs: Tensor of character probabilities from the network. Expected shape of seq_length x batch x output_dim
-            sizes(optional): Size of each sequence in the mini-batch
-        Returns:
-            strings: sequences of the model's best guess for the transcription on inputs
-        """
-        _, max_probs = torch.topk(probs.transpose(0, 1),k=2 ,dim=2)
-        index = torch.LongTensor([1]).cuda()
-        max_probs = max_probs.index_select(dim=2, index=index)
-        strings = self.convert_to_strings(max_probs.view(max_probs.size(0), max_probs.size(1)), sizes)
-        return self.process_strings(strings, remove_repetitions=True)
-
-
-class InacurateGreedyDecoder(Decoder):
-    def decode(self, probs, sizes=None):
-        """
-        Returns the argmax decoding given the probability matrix. Removes
-        repeated elements in the sequence, as well as blanks.
-
-        Arguments:
-            probs: Tensor of character probabilities from the network. Expected shape of seq_length x batch x output_dim
-            sizes(optional): Size of each sequence in the mini-batch
-        Returns:
-            strings: sequences of the model's best guess for the transcription on inputs
-        """
-        _, max_probs = torch.max(probs.transpose(0, 1), 2)
-        error_idx = random.randint(0, len(probs) - 1)
-        error_frame = random.randint(0, len(probs) - 1)
-        max_probs[error_idx] = error_frame
-        strings = self.convert_to_strings(max_probs.view(max_probs.size(0), max_probs.size(1)), sizes)
-        return self.process_strings(strings, remove_repetitions=True)
-
-
 class PrefixBeamSearchDecoder(Decoder):
-    def __init__(self, labels, beam_size=12):
-        super(PrefixBeamSearchDecoder, self).__init__(labels=labels)
+    def __init__(self, labels, beam_size=12, cuda=False):
+        super(PrefixBeamSearchDecoder, self).__init__(labels=labels, cuda=cuda)
         self.beam_size = beam_size
 
     def decode(self, probs, sizes=None):

@@ -46,7 +46,7 @@ class _ctc_houdini_loss(Function):
         y_strings = self.decoder.convert_to_strings(split_targets)
 
         ### get highest path of y ###
-        y_path = viterbi(acts.view(seq_len, n_fears).data.cpu().numpy(), labels.data.cpu().numpy()).view(1,-1)
+        y_path = viterbi(acts.view(seq_len, n_fears).data.cpu().numpy(), labels.data.cpu().numpy(), blanks=True).view(1,-1)
         if self.cuda:
             y_hat_paths = y_hat_paths.cuda()
             y_path = y_path.cuda()
@@ -56,11 +56,12 @@ class _ctc_houdini_loss(Function):
         batch_task_loss = torch.FloatTensor(batch_task_loss)
         if self.cuda: batch_task_loss = batch_task_loss.cuda()
 
-        # calc delta & grads
-        self.grads = self.grads.scatter_(2, y_hat_paths.view(seq_len, 1, 1), 1)  # put 1s according to y_hat path
-        self.grads -= self.grads.scatter_(2, y_path.view(seq_len, 1, 1), 1)  # put 1s according to y path
-
-        # calc grad
+        ### calc grads ###
+        self.grads.fill_(0.05)
+        self.grads.scatter_(2, y_hat_paths.view(seq_len, 1, 1), 0.5)  # put 1s according to y_hat path
+        self.grads.scatter_(2, y_path.view(seq_len, 1, 1), -0.5)  # put 1s according to y path
+        coeff = batch_task_loss
+        coeff = coeff.unsqueeze(0).unsqueeze(2).expand(seq_len, batch_size, n_fears)
         self.grads = self.grads
 
         return torch.FloatTensor([batch_task_loss.sum()])
