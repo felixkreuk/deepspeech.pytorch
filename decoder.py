@@ -189,7 +189,8 @@ class GreedyDecoder(Decoder):
         """
         max_probs_val, max_probs = torch.max(probs.transpose(0, 1), 2)
         max_probs_val = torch.cumprod(max_probs_val, 1)
-        max_probs_val = max_probs_val.index_select(dim=1, index=torch.LongTensor([max_probs_val.size(1) - 1]))
+        index = torch.LongTensor([max_probs_val.size(1) - 1])
+        max_probs_val = max_probs_val.index_select(dim=1, index=index)
         max_probs_val = max_probs_val.view(-1)
         max_paths     = max_probs.view(max_probs.size(0), max_probs.size(1))
         strings = self.convert_to_strings(max_probs.view(max_probs.size(0), max_probs.size(1)), sizes)

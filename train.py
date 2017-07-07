@@ -305,8 +305,8 @@ def main():
 
             ######################################################################################
             ### PREDICT y_hat ###
-            y_hat1 = decoder.decode(out.data, sizes.data)
-            y_hat = decoder.process_strings(y_hat1)
+            y_hat, _, _ = decoder.decode(out.data, sizes.data)
+            y_hat = decoder.process_strings(y_hat)
 
             ### CONVERT y TO STRINGS ###
             split_targets = []

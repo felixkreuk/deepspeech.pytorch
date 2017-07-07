@@ -129,6 +129,8 @@ class DeepSpeech(nn.Module):
         x = self.fc(x)
         x = x.transpose(0, 1)
         x = self.softmax(x)
+        # batch_size = x.size()[0]  # todo
+        # x = torch.stack([F.log_softmax(x[i]) for i in range(batch_size)], 0)  # todo
         return x
 
     @classmethod

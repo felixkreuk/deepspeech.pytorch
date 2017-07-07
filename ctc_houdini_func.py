@@ -8,6 +8,7 @@ import Levenshtein as Lev
 import math
 from utils import border_msg
 import torch.nn.functional as F
+from ctc_aligner import viterbi
 
 
 class _ctc_houdini_loss(Function):
@@ -44,6 +45,12 @@ class _ctc_houdini_loss(Function):
             offset += size
         y_strings = self.decoder.convert_to_strings(split_targets)
 
+        ### get highest path of y ###
+        y_path = viterbi(acts.view(seq_len, n_fears).data.cpu().numpy(), labels.data.cpu().numpy()).view(1,-1)
+        if self.cuda:
+            y_hat_paths = y_hat_paths.cuda()
+            y_path = y_path.cuda()
+
         ### calc task loss ###
         batch_task_loss = [1.0 * self.task_loss(s1, s2) / len(s1) for s1, s2 in zip(y_strings, y_hat)]
         batch_task_loss = torch.FloatTensor(batch_task_loss)
@@ -51,23 +58,7 @@ class _ctc_houdini_loss(Function):
 
         # calc delta & grads
         self.grads = self.grads.scatter_(2, y_hat_paths.view(seq_len, 1, 1), 1)  # put 1s according to y_hat path
-
-
-        # get the good deltas
-        # good_deltas = torch.ge(delta.data, torch.zeros(batch_size))
-        # if self.cuda: good_deltas = good_deltas.cuda()
-        # print "good deltas: %d/%d" % (good_deltas.sum(), len(good_deltas))
-
-        # calc & clip coeff
-        # coeff = (-0.5) * torch.pow(delta, 2).data
-        # coeff = (self.coeff * torch.exp(coeff))
-        # print "\n%s\n" % ("#" * 50)
-        # if self.cuda: coeff = coeff.cuda()
-        # coeff = torch.mul(batch_task_loss, coeff)
-        # coeff = torch.clamp(coeff, 0.3, 1)
-        # coeff = batch_task_loss
-        # coeff *= good_deltas.float()  # mind only "good" deltas
-        # coeff = coeff.unsqueeze(0).unsqueeze(2).expand(seq_len, batch_size, n_fears)
+        self.grads -= self.grads.scatter_(2, y_path.view(seq_len, 1, 1), 1)  # put 1s according to y path
 
         # calc grad
         self.grads = self.grads
