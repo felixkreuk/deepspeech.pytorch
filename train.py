@@ -177,10 +177,9 @@ def main():
     test_dataset = SpectrogramDataset(audio_conf=audio_conf, manifest_filepath=args.val_manifest, labels=labels,
                                       normalize=True, augment=False)
     train_loader = AudioDataLoader(train_dataset, batch_size=args.batch_size,
-                                   num_workers=args.num_workers, sampler=SubsetRandomSampler(range(50)))
+                                   num_workers=args.num_workers)#, sampler=SubsetRandomSampler(range(100)))
     test_loader = AudioDataLoader(test_dataset, batch_size=args.batch_size,
-                                  num_workers=args.num_workers, sampler=SubsetRandomSampler(range(10)))
-    test_loader = train_loader  # todo
+                                  num_workers=args.num_workers)#, sampler=SubsetRandomSampler(range(10)))
 
     rnn_type = args.rnn_type.lower()
     assert rnn_type in supported_rnns, "rnn_type should be either lstm, rnn or gru"
@@ -488,14 +487,14 @@ def main():
 
         prev_cer = cer
         avg_loss = 0
-        # print not args.no_bucketing, epoch==0
-        # if not args.no_bucketing and epoch == 0:
-        #     print("Switching to bucketing sampler for following epochs")
-        #     train_dataset = SpectrogramDatasetWithLength(audio_conf=audio_conf, manifest_filepath=args.train_manifest,
-        #                                                  labels=labels,
-        #                                                  normalize=True, augment=args.augment)
-        #     sampler = BucketingSampler(train_dataset)
-        #     train_loader.sampler = sampler
+        print not args.no_bucketing, epoch==0
+        if not args.no_bucketing and epoch == 0:
+            print("Switching to bucketing sampler for following epochs")
+            train_dataset = SpectrogramDatasetWithLength(audio_conf=audio_conf, manifest_filepath=args.train_manifest,
+                                                         labels=labels,
+                                                         normalize=True, augment=args.augment)
+            sampler = BucketingSampler(train_dataset)
+            train_loader.sampler = sampler
 
     torch.save(DeepSpeech.serialize(model, optimizer=optimizer), args.final_model_path)
 

@@ -57,12 +57,16 @@ class _ctc_houdini_loss(Function):
         if self.cuda: batch_task_loss = batch_task_loss.cuda()
 
         ### calc grads ###
-        self.grads.fill_(0.05)
-        self.grads.scatter_(2, y_hat_paths.view(seq_len, 1, 1), 0.5)  # put 1s according to y_hat path
-        self.grads.scatter_(2, y_path.view(seq_len, 1, 1), -0.5)  # put 1s according to y path
+        self.grads.fill_(0.0)
+        grads1 = torch.zeros(acts.size())
+        grads2 = torch.zeros(acts.size())
+        if self.cuda: grads1, grads2 = grads1.cuda(), grads2.cuda()
+        grads1.scatter_(2, y_hat_paths.view(seq_len, 1, 1), 1)  # put 1s according to y_hat path
+        grads2.scatter_(2, y_path.view(seq_len, 1, 1), -1)  # put 1s according to y path
+        self.grads += grads1 + grads2
         coeff = batch_task_loss
         coeff = coeff.unsqueeze(0).unsqueeze(2).expand(seq_len, batch_size, n_fears)
-        self.grads = self.grads
+        self.grads = self.grads * coeff
 
         return torch.FloatTensor([batch_task_loss.sum()])
 
