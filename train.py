@@ -16,7 +16,8 @@ from data.data_loader import AudioDataLoader, SpectrogramDataset
 from decoder import GreedyDecoder, SecondGreedyDecoder, PrefixBeamSearchDecoder, InacurateGreedyDecoder
 from model import DeepSpeech, supported_rnns
 from yellowfin import YFOptimizer
-
+from sacred import Experiment
+from sacred.observers import MongoObserver
 # from data.synth_data import create_data
 
 parser = argparse.ArgumentParser(description='DeepSpeech training')
@@ -67,8 +68,10 @@ parser.add_argument('--beam_size', dest='beam_size', type=int, help='Size of bea
 parser.add_argument('--decoder', default='argmax', help='Type of the decoder used for inference.')
 parser.add_argument('--loss', default='CTC', help='Type of loss.')
 parser.add_argument('--optimizer', default='sgd', help='Type of loss.')
-
+args = parser.parse_args()
 torch.manual_seed(123)
+ex = Experiment('NN Large-margin')
+ex.observers.append(MongoObserver.create())
 
 def to_np(x):
     return x.data.cpu().numpy()
@@ -93,8 +96,8 @@ class AverageMeter(object):
         self.avg = self.sum / self.count
 
 
-def main():
-    args = parser.parse_args()
+@ex.main
+def run(args=args):
     save_folder = args.save_folder
 
     loss_results, cer_results, wer_results = torch.Tensor(args.epochs), torch.Tensor(args.epochs), torch.Tensor(
@@ -484,12 +487,6 @@ def main():
                 print('Learning rate annealed to: {lr:.6f}'.format(lr=optim_state['param_groups'][0]['lr']))
 
         prev_cer = cer
-
-        # if epoch == 0:
-        #     optim_state = optimizer.state_dict()
-        #     optim_state['param_groups'][0]['lr'] = optim_state['param_groups'][0]['lr'] / 100
-        #     print('Learning rate annealed to: {lr:.6f}'.format(lr=optim_state['param_groups'][0]['lr']))
-
         avg_loss = 0
         if not args.no_bucketing and epoch == 0:
             print("Switching to bucketing sampler for following epochs")
@@ -503,4 +500,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    ex.run(config_updates={"args": args})
