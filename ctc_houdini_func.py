@@ -77,8 +77,7 @@ class _ctc_houdini_loss(Function):
         coeff = coeff.unsqueeze(0).unsqueeze(2).expand(seq_len, batch_size, n_fears)
 
         # calc grad
-        # self.grads = -(y_hat_ctc_grad - y_ctc_grad) * coeff
-        self.grads = -(y_hat_ctc_grad * 0.05 - y_ctc_grad) * coeff
+        self.grads = -(y_hat_ctc_grad * 0.1 - y_ctc_grad) * coeff
 
         return torch.FloatTensor([batch_task_loss.sum()])
 
