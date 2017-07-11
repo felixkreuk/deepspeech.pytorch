@@ -13,3 +13,7 @@ def tensor_pad1d(tensor, pad_amount, pad_value=0, pad_at_the_end=True):
         return torch.cat([tensor.float(), torch.zeros(pad_amount).fill_(pad_value)], 0)
     else:
         return torch.cat([torch.zeros(pad_amount).fill_(pad_value), tensor.float()], 0)
+
+def thread_id_wrapper(tid, func, args, queue):
+    a,b,c = args
+    queue.put((tid, func(a,b,c)))

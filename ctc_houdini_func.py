@@ -6,10 +6,11 @@ from my_ctc import CTCLoss, _CTC
 import numpy as np
 import Levenshtein as Lev
 import math
-from utils import border_msg, tensor_pad1d
+from utils import border_msg, tensor_pad1d, thread_id_wrapper
 import torch.nn.functional as F
 from ctc_aligner import viterbi
-import threading
+from threading import Thread
+import Queue
 
 
 class _ctc_houdini_loss(Function):
@@ -47,14 +48,23 @@ class _ctc_houdini_loss(Function):
         y_strings = self.decoder.convert_to_strings(split_targets)
 
         ### compute matrix of y paths ###
+        threads = []
+        q = Queue.Queue()
         acts = acts.transpose(0, 1)
         y_paths = torch.zeros(batch_size, seq_len)
         label_segments = torch.cumsum(torch.cat([torch.zeros(1), label_lens.data.float()]), 0)
         for i in xrange(batch_size):
-            y_path = viterbi(acts[i].data[0: int(act_lens.data[i])].cpu().numpy(),
-                             labels.data[int(label_segments[i]): int(label_segments[i+1])].cpu().numpy(),
-                             blanks=True)
-            y_paths[i] = tensor_pad1d(y_path, seq_len - len(y_path))
+            args = acts[i].data[0: int(act_lens.data[i])].cpu().numpy(),\
+                   labels.data[int(label_segments[i]): int(label_segments[i+1])].cpu().numpy(),\
+                   True
+            t = Thread(target=thread_id_wrapper, args=(i, viterbi, args, q))
+            t.start()
+            threads.append(t)
+        for t in threads:
+            t.join()
+        for _ in threads:
+            tid, y_path = q.get()
+            y_paths[tid] = tensor_pad1d(y_path, seq_len - len(y_path))
         acts = acts.transpose(0, 1)
 
         ### transform for zero-hot ###
