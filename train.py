@@ -97,7 +97,7 @@ class AverageMeter(object):
         self.avg = self.sum / self.count
 
 
-@ex.main
+# @ex.main
 def run(args=args):
     save_folder = args.save_folder
 
@@ -504,5 +504,5 @@ def run(args=args):
 
 
 if __name__ == '__main__':
-    ex.run(config_updates={"args": args})
-    # run(args)
+    # ex.run(config_updates={"args": args})
+    run(args)

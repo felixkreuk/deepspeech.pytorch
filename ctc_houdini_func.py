@@ -6,9 +6,10 @@ from my_ctc import CTCLoss, _CTC
 import numpy as np
 import Levenshtein as Lev
 import math
-from utils import border_msg
+from utils import border_msg, tensor_pad1d
 import torch.nn.functional as F
 from ctc_aligner import viterbi
+import threading
 
 
 class _ctc_houdini_loss(Function):
@@ -45,11 +46,24 @@ class _ctc_houdini_loss(Function):
             offset += size
         y_strings = self.decoder.convert_to_strings(split_targets)
 
-        ### get highest path of y ###
-        y_path = viterbi(acts.view(seq_len, n_fears).data.cpu().numpy(), labels.data.cpu().numpy(), blanks=True).view(1,-1)
+        ### compute matrix of y paths ###
+        acts = acts.transpose(0, 1)
+        y_paths = torch.zeros(batch_size, seq_len)
+        label_segments = torch.cumsum(torch.cat([torch.zeros(1), label_lens.data.float()]), 0)
+        for i in xrange(batch_size):
+            y_path = viterbi(acts[i].data[0: int(act_lens.data[i])].cpu().numpy(),
+                             labels.data[int(label_segments[i]): int(label_segments[i+1])].cpu().numpy(),
+                             blanks=True)
+            y_paths[i] = tensor_pad1d(y_path, seq_len - len(y_path))
+        acts = acts.transpose(0, 1)
+
+        ### transform for zero-hot ###
+        y_paths = y_paths.transpose(0, 1).contiguous().view(seq_len, batch_size, 1).long()
+        y_hat_paths = y_hat_paths.transpose(0, 1).contiguous().view(seq_len, batch_size, 1).long()
+
         if self.cuda:
             y_hat_paths = y_hat_paths.cuda()
-            y_path = y_path.cuda()
+            y_paths = y_paths.cuda()
 
         ### calc task loss ###
         batch_task_loss = [1.0 * self.task_loss(s1, s2) / len(s1) for s1, s2 in zip(y_strings, y_hat)]
@@ -63,8 +77,8 @@ class _ctc_houdini_loss(Function):
         # ctc(acts, labels, act_lens, label_lens)
         # grads2 = ctc.grads
         if self.cuda: grads1, grads2 = grads1.cuda(), grads2.cuda()
-        grads1.scatter_(2, y_hat_paths.view(seq_len, 1, 1), 1)  # put 1s according to y_hat path
-        grads2.scatter_(2, y_path.view(seq_len, 1, 1), -1)  # put 1s according to y path
+        grads1.scatter_(2, y_hat_paths, 1)  # put 1s according to y_hat path
+        grads2.scatter_(2, y_paths, 1)  # put 1s according to y path
         self.grads += grads1 - grads2
         coeff = batch_task_loss
         coeff = coeff.unsqueeze(0).unsqueeze(2).expand(seq_len, batch_size, n_fears)
