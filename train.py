@@ -7,18 +7,18 @@ import numpy as np
 
 import torch
 from torch.autograd import Variable
-# from warpctc_pytorch import CTCLoss
-from my_ctc import CTCLoss
+from warpctc_pytorch import CTCLoss
 from ctc_hinge_func import ctc_hinge_loss
 from ctc_houdini_func import ctc_houdini_loss
 
 from data.bucketing_sampler import BucketingSampler, SpectrogramDatasetWithLength
 from data.data_loader import AudioDataLoader, SpectrogramDataset
+from torch.utils.data.sampler import SubsetRandomSampler
 from decoder import GreedyDecoder, PrefixBeamSearchDecoder
 from model import DeepSpeech, supported_rnns
 from yellowfin import YFOptimizer
-from torch.utils.data.sampler import SubsetRandomSampler
-
+from sacred import Experiment
+from sacred.observers import MongoObserver
 # from data.synth_data import create_data
 
 parser = argparse.ArgumentParser(description='DeepSpeech training')
@@ -69,8 +69,10 @@ parser.add_argument('--beam_size', dest='beam_size', type=int, help='Size of bea
 parser.add_argument('--decoder', default='argmax', help='Type of the decoder used for inference.')
 parser.add_argument('--loss', default='CTC', help='Type of loss.')
 parser.add_argument('--optimizer', default='sgd', help='Type of loss.')
-
+args = parser.parse_args()
 torch.manual_seed(123)
+ex = Experiment('NN Large-margin')
+ex.observers.append(MongoObserver.create())
 
 def to_np(x):
     return x.data.cpu().numpy()
@@ -95,8 +97,8 @@ class AverageMeter(object):
         self.avg = self.sum / self.count
 
 
-def main():
-    args = parser.parse_args()
+@ex.main
+def run(args=args):
     save_folder = args.save_folder
 
     loss_results, cer_results, wer_results = torch.Tensor(args.epochs), torch.Tensor(args.epochs), torch.Tensor(
@@ -144,14 +146,14 @@ def main():
 
     ### SET DECODER ###
     if args.decoder == 'beamsearch':
-        decoder = GreedyDecoder(labels, cuda=args.cuda)
+        decoder = GreedyDecoder(labels)
         print("===> Using beam-search decoder.")
     elif args.decoder == 'prefix':
         decoder = PrefixBeamSearchDecoder(labels, beam_size=args.beam_size)
         print("===> Using prefix-search decoder.")
     else:
         decoder = GreedyDecoder(labels, cuda=args.cuda)
-        print("===> Using argmax decoder (cuda=%s)." % args.cuda)
+        print("===> Using argmax decoder.")
 
     ### SET LOSS FUNCTION ###
     if args.loss == 'ctc_hinge':
@@ -177,9 +179,9 @@ def main():
     test_dataset = SpectrogramDataset(audio_conf=audio_conf, manifest_filepath=args.val_manifest, labels=labels,
                                       normalize=True, augment=False)
     train_loader = AudioDataLoader(train_dataset, batch_size=args.batch_size,
-                                   num_workers=args.num_workers)#, sampler=SubsetRandomSampler(range(100)))
+                                   num_workers=args.num_workers)
     test_loader = AudioDataLoader(test_dataset, batch_size=args.batch_size,
-                                  num_workers=args.num_workers)#, sampler=SubsetRandomSampler(range(10)))
+                                  num_workers=args.num_workers)
 
     rnn_type = args.rnn_type.lower()
     assert rnn_type in supported_rnns, "rnn_type should be either lstm, rnn or gru"
@@ -270,6 +272,7 @@ def main():
 
     prev_cer = 0
     no_improve = 0
+    best_cer = 100
 
     print("Starting training...")
     if args.visdom:
@@ -423,6 +426,7 @@ def main():
         cer = total_cer / len(test_loader.dataset)
         wer *= 100
         cer *= 100
+        if cer < best_cer: best_cer = cer
         loss_results[epoch] = avg_loss
         wer_results[epoch] = wer
         cer_results[epoch] = cer
@@ -487,7 +491,6 @@ def main():
 
         prev_cer = cer
         avg_loss = 0
-        print not args.no_bucketing, epoch==0
         if not args.no_bucketing and epoch == 0:
             print("Switching to bucketing sampler for following epochs")
             train_dataset = SpectrogramDatasetWithLength(audio_conf=audio_conf, manifest_filepath=args.train_manifest,
@@ -496,8 +499,10 @@ def main():
             sampler = BucketingSampler(train_dataset)
             train_loader.sampler = sampler
 
+    return best_cer
     torch.save(DeepSpeech.serialize(model, optimizer=optimizer), args.final_model_path)
 
 
 if __name__ == '__main__':
-    main()
+    ex.run(config_updates={"args": args})
+    # run(args)

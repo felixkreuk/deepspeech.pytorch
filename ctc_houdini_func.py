@@ -30,7 +30,7 @@ class _ctc_houdini_loss(Function):
                                              Variable(labels), \
                                              Variable(act_lens), \
                                              Variable(label_lens)
-
+        ctc = _CTC()
         seq_len, batch_size, n_fears = self.grads.size()
 
         ### predict y_hat ###
@@ -60,10 +60,12 @@ class _ctc_houdini_loss(Function):
         self.grads.fill_(0.0)
         grads1 = torch.zeros(acts.size())
         grads2 = torch.zeros(acts.size())
+        # ctc(acts, labels, act_lens, label_lens)
+        # grads2 = ctc.grads
         if self.cuda: grads1, grads2 = grads1.cuda(), grads2.cuda()
         grads1.scatter_(2, y_hat_paths.view(seq_len, 1, 1), 1)  # put 1s according to y_hat path
         grads2.scatter_(2, y_path.view(seq_len, 1, 1), -1)  # put 1s according to y path
-        self.grads += grads1 + grads2
+        self.grads += grads1 - grads2
         coeff = batch_task_loss
         coeff = coeff.unsqueeze(0).unsqueeze(2).expand(seq_len, batch_size, n_fears)
         self.grads = self.grads * coeff
