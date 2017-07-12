@@ -52,14 +52,18 @@ class _ctc_houdini_loss(Function):
         q = Queue.Queue()
         acts = acts.transpose(0, 1)
         y_paths = torch.zeros(batch_size, seq_len)
-        label_segments = torch.cumsum(torch.cat([torch.zeros(1), label_lens.data.float()]), 0)
+        label_segments = torch.cumsum(torch.cat([torch.zeros(1), label_lens.data.float()]), 0)  # start & end of labels
         for i in xrange(batch_size):
+            # pass the current sequence, current label and True to enable blanks
             args = acts[i].data[0: int(act_lens.data[i])].cpu().numpy(),\
                    labels.data[int(label_segments[i]): int(label_segments[i+1])].cpu().numpy(),\
                    True
-            t = Thread(target=thread_id_wrapper, args=(i, viterbi, args, q))
-            t.start()
+            t = Thread(target=thread_id_wrapper, args=(i, viterbi, args, q))  # create a thread to run viterbi
             threads.append(t)
+
+        ### start all threads and wait for them to finish together ###
+        for t in threads:
+            t.start()
         for t in threads:
             t.join()
         for _ in threads:
