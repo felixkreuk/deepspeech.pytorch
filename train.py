@@ -61,7 +61,7 @@ parser.add_argument('--noise_max', default=0.5,
 parser.add_argument('--tensorboard', dest='tensorboard', action='store_true', help='Turn on tensorboard graphing')
 parser.add_argument('--log_dir', default='visualize/deepspeech_final', help='Location of tensorboard log')
 parser.add_argument('--log_params', dest='log_params', action='store_true', help='Log parameter values and gradients')
-parser.add_argument('--no_bucketing', dest='no_bucketing', action='store_false',
+parser.add_argument('--no_bucketing', dest='no_bucketing', action='store_true',
                     help='Turn off bucketing and sample from dataset based on sequence length (smallest to largest)')
 parser.set_defaults(cuda=False, silent=False, checkpoint=False, visdom=False, augment=False, tensorboard=False,
                     log_params=False, no_bucketing=False)
@@ -179,9 +179,9 @@ def run(args=args):
     test_dataset = SpectrogramDataset(audio_conf=audio_conf, manifest_filepath=args.val_manifest, labels=labels,
                                       normalize=True, augment=False)
     train_loader = AudioDataLoader(train_dataset, batch_size=args.batch_size,
-                                   num_workers=args.num_workers)
+                                   num_workers=args.num_workers)#, sampler=SubsetRandomSampler(range(100)))
     test_loader = AudioDataLoader(test_dataset, batch_size=args.batch_size,
-                                  num_workers=args.num_workers)
+                                  num_workers=args.num_workers)#, sampler=SubsetRandomSampler(range(50)))
 
     rnn_type = args.rnn_type.lower()
     assert rnn_type in supported_rnns, "rnn_type should be either lstm, rnn or gru"
@@ -491,7 +491,7 @@ def run(args=args):
 
         prev_cer = cer
         avg_loss = 0
-        if not args.no_bucketing and epoch == 0:
+        if False and not args.no_bucketing and epoch == 0:
             print("Switching to bucketing sampler for following epochs")
             train_dataset = SpectrogramDatasetWithLength(audio_conf=audio_conf, manifest_filepath=args.train_manifest,
                                                          labels=labels,
